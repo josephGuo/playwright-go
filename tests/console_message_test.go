@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,7 +84,8 @@ func TestConsoleShouldWorkForDifferentConsoleAPICalls(t *testing.T) {
       console.warn('calling console.warn');
       console.error('calling console.error');
       console.log(Promise.resolve('should not wait until resolved!'));
-	}`)
+	}`,
+	)
 	messages := ChanToSlice(messagesChan, 6)
 	require.NoError(t, err)
 	require.Equal(t, []string{
@@ -165,4 +166,8 @@ func TestConsoleShouldHaveLocationForConsoleAPICalls(t *testing.T) {
 	require.Equal(t, message.Type(), "log")
 	require.Equal(t, server.PREFIX+"/consolelog.html", message.Location().URL)
 	require.Equal(t, 7, message.Location().LineNumber)
+	// The non-deprecated Line/Column aliases must be populated too (upstream
+	// maps lineNumber/columnNumber onto line/column).
+	require.Equal(t, message.Location().LineNumber, message.Location().Line)
+	require.Equal(t, message.Location().ColumnNumber, message.Location().Column)
 }

@@ -10,11 +10,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/h2non/filetype"
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -218,6 +219,32 @@ func TestPageEvaluate(t *testing.T) {
 	require.Equal(t, val, big.NewInt(17))
 }
 
+// TestPageEvaluateIntegerArgTypes verifies that sized integer types (not just
+// the bare int) round-trip as numbers rather than being serialized as
+// undefined.
+func TestPageEvaluateIntegerArgTypes(t *testing.T) {
+	BeforeEach(t)
+
+	for _, arg := range []any{int8(7), int16(7), int32(7), int64(7), uint(7), uint8(7), uint16(7), uint32(7), uint64(7)} {
+		val, err := page.Evaluate(`a => a + 1`, arg)
+		require.NoError(t, err)
+		require.EqualValues(t, 8, val)
+	}
+}
+
+// TestPageEvaluateReturnsRegExp verifies that a RegExp returned from page
+// evaluation is parsed into a *regexp.Regexp instead of panicking the client.
+func TestPageEvaluateReturnsRegExp(t *testing.T) {
+	BeforeEach(t)
+
+	val, err := page.Evaluate(`() => /foo.*bar/i`)
+	require.NoError(t, err)
+	re, ok := val.(*regexp.Regexp)
+	require.True(t, ok, "expected *regexp.Regexp, got %T", val)
+	require.True(t, re.MatchString("xx FOO zz BAR yy"))
+	require.False(t, re.MatchString("baz"))
+}
+
 func TestPageEvalOnSelectorAll(t *testing.T) {
 	BeforeEach(t)
 
@@ -259,7 +286,8 @@ func TestPageExpectWorker(t *testing.T) {
 	worker = page.Workers()[0]
 	require.Contains(t, worker.URL(), "worker.js")
 	// flaky in the macos-latest of gh action
-	require.Eventually(t,
+	require.Eventually(
+		t,
 		func() bool {
 			v, err := worker.Evaluate(`() => self["workerFunction"] ? true : false`)
 			require.NoError(t, err)
@@ -334,6 +362,7 @@ func TestPageExpectRequestFinished(t *testing.T) {
 }
 
 func TestPageExpectPopup(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	_, err := page.Goto(server.EMPTY_PAGE)
@@ -401,6 +430,7 @@ func TestPageExpectEvent(t *testing.T) {
 }
 
 func TestPageOpener(t *testing.T) {
+	skipWebKitMacOSPopup(t)
 	BeforeEach(t)
 
 	eventPage, err := context.ExpectEvent("page", func() error {
@@ -415,6 +445,12 @@ func TestPageOpener(t *testing.T) {
 	require.Equal(t, opener, page)
 
 	opener, err = page.Opener()
+	require.NoError(t, err)
+	require.Nil(t, opener)
+
+	// Once the opener page is closed, Opener() returns nil (matches upstream).
+	require.NoError(t, page.Close())
+	opener, err = popup.Opener()
 	require.NoError(t, err)
 	require.Nil(t, opener)
 }
@@ -468,6 +504,21 @@ func TestPageReload(t *testing.T) {
 	v, err := page.Evaluate("window._foo")
 	require.NoError(t, err)
 	require.Nil(t, v)
+}
+
+// TestPageReloadRespectsDefaultNavigationTimeout verifies Reload honors the
+// configured default navigation timeout (it must resolve the timeout, not fall
+// back to the hardcoded 30s serializer default).
+func TestPageReloadRespectsDefaultNavigationTimeout(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(server.EMPTY_PAGE)
+	require.NoError(t, err)
+	page.SetDefaultNavigationTimeout(1)
+	server.SetRoute("/empty.html", func(w http.ResponseWriter, r *http.Request) {}) // stall
+	_, err = page.Reload()
+	require.ErrorIs(t, err, playwright.ErrTimeout)
+	require.ErrorContains(t, err, "Timeout 1ms exceeded.")
 }
 
 func TestPageGoBackGoForward(t *testing.T) {
@@ -829,11 +880,11 @@ func TestPageFrame(t *testing.T) {
 	require.Equal(t, name, frame2.Name())
 	require.Equal(t, server.EMPTY_PAGE, frame2.URL())
 
+	// When a name is provided it takes precedence and the URL is never
+	// consulted, matching upstream (page.frame should respect name): a
+	// non-matching name returns nil regardless of the URL.
 	badName := "test"
-	frame3 := page.Frame(playwright.PageFrameOptions{Name: &badName, URL: server.EMPTY_PAGE})
-	require.Equal(t, name, frame3.Name())
-	require.Equal(t, server.EMPTY_PAGE, frame3.URL())
-
+	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName, URL: server.EMPTY_PAGE}))
 	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName, URL: "https://example.com"}))
 	require.Nil(t, page.Frame(playwright.PageFrameOptions{Name: &badName}))
 }
@@ -1004,11 +1055,12 @@ func TestPageShouldSetBodysizeAndHeadersize(t *testing.T) {
 
 	_, err := page.Goto(server.EMPTY_PAGE)
 	require.NoError(t, err)
-	request, err := page.ExpectRequest("**/*", func() error {
-		_, err = page.Evaluate("() => fetch('./get', { method: 'POST', body: '12345'}).then(r => r.text())")
-		require.NoError(t, err)
-		return nil
-	},
+	request, err := page.ExpectRequest(
+		"**/*", func() error {
+			_, err = page.Evaluate("() => fetch('./get', { method: 'POST', body: '12345'}).then(r => r.text())")
+			require.NoError(t, err)
+			return nil
+		},
 	)
 	require.NoError(t, err)
 	sizes, err := request.Sizes()
@@ -1022,11 +1074,12 @@ func TestPageTestShouldSetBodysizeTo0(t *testing.T) {
 
 	_, err := page.Goto(server.EMPTY_PAGE)
 	require.NoError(t, err)
-	request, err := page.ExpectRequest("**/*", func() error {
-		_, err = page.Evaluate("() => fetch('./get').then(r => r.text())")
-		require.NoError(t, err)
-		return nil
-	},
+	request, err := page.ExpectRequest(
+		"**/*", func() error {
+			_, err = page.Evaluate("() => fetch('./get').then(r => r.text())")
+			require.NoError(t, err)
+			return nil
+		},
 	)
 	require.NoError(t, err)
 	sizes, err := request.Sizes()
@@ -1146,6 +1199,52 @@ func TestPageExpectResponse(t *testing.T) {
 		require.Nil(t, response)
 		require.ErrorContains(t, err, "Timeout 1000.00ms exceeded.")
 	})
+
+	// Regression test for https://github.com/mxschmitt/playwright-go/issues/323:
+	// waiting for several responses concurrently (the Go equivalent of
+	// Promise.all) must resolve every waiter. Previously, once one waiter
+	// completed it unsubscribed all the others, so the rest timed out.
+	t.Run("should work with concurrent waiters", func(t *testing.T) {
+		BeforeEach(t)
+
+		ids := []string{"a", "b", "c", "d", "e", "f"}
+		for _, id := range ids {
+			id := id
+			server.SetRoute("/api/"+id, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, err := fmt.Fprintf(w, `{"id":"%s"}`, id)
+				require.NoError(t, err)
+			})
+		}
+
+		_, err := page.Goto(server.EMPTY_PAGE)
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		results := make([]string, len(ids))
+		errs := make([]error, len(ids))
+		for i, id := range ids {
+			wg.Add(1)
+			go func(idx int, id string) {
+				defer wg.Done()
+				resp, err := page.ExpectResponse("**/api/"+id, func() error {
+					_, e := page.Evaluate(fmt.Sprintf(`fetch("/api/%s")`, id))
+					return e
+				}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(10 * 1000)})
+				if err != nil {
+					errs[idx] = err
+					return
+				}
+				results[idx] = resp.URL()
+			}(i, id)
+		}
+		wg.Wait()
+
+		for i, id := range ids {
+			require.NoErrorf(t, errs[i], "waiter %d (id %s)", i, id)
+			require.Contains(t, results[i], "/api/"+id)
+		}
+	})
 }
 
 func TestPageWaitForURL(t *testing.T) {
@@ -1207,11 +1306,33 @@ func TestCloseShouldRunBeforunloadIfAskedFor(t *testing.T) {
 	} else {
 		require.Contains(t, dialog.Message(), "This page is asking you to confirm that you want to leave")
 	}
+	// Accepting the beforeunload dialog closes the page, so waiting for the
+	// "close" event must resolve successfully (matching upstream beforeunload.spec.ts).
 	_, err = page.ExpectEvent("close", func() error {
-		require.NoError(t, dialog.Accept())
-		return nil
+		return dialog.Accept()
 	})
-	require.Error(t, err)
+	require.NoError(t, err)
+}
+
+// TestCloseShouldAccessPageAfterBeforeUnload mirrors upstream's "should access
+// page after beforeunload" test: with runBeforeUnload the page is not actually
+// closed after dismissing the dialog, so it remains usable.
+func TestCloseShouldAccessPageAfterBeforeUnload(t *testing.T) {
+	BeforeEach(t)
+
+	_, err := page.Goto(fmt.Sprintf("%s/beforeunload.html", server.PREFIX))
+	require.NoError(t, err)
+	dialogInfo, err := page.ExpectEvent("dialog", func() error {
+		require.NoError(t, page.Locator("body").Click())
+		return page.Close(playwright.PageCloseOptions{
+			RunBeforeUnload: playwright.Bool(true),
+		})
+	})
+	require.NoError(t, err)
+	dialog := dialogInfo.(playwright.Dialog)
+	require.NoError(t, dialog.Dismiss())
+	_, err = page.Evaluate("() => document.title")
+	require.NoError(t, err)
 }
 
 func TestPageGotoShouldFailWhenExceedingBrowserContextNavigationTimeout(t *testing.T) {

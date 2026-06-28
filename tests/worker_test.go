@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +21,8 @@ func TestWorkerShouldWork(t *testing.T) {
 	worker = page.Workers()[0]
 	require.Contains(t, worker.URL(), "worker.js")
 	// flaky in the macos-latest of gh action
-	require.Eventually(t,
+	require.Eventually(
+		t,
 		func() bool {
 			v, err := worker.Evaluate(`() => self["workerFunction"] ? true : false`)
 			require.NoError(t, err)

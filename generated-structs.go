@@ -334,11 +334,41 @@ type StorageState struct {
 	Origins []Origin `json:"origins"`
 }
 
+type APIRequestContextStorageStateOptions struct {
+	// Set to `true` to include IndexedDB in the storage state snapshot.
+	IndexedDB *bool `json:"indexedDB"`
+	// The file path to save the storage state to. If “[object Object]” is a relative path, then it is resolved relative
+	// to current working directory. If no path is provided, storage state is still returned, but won't be saved to the
+	// disk.
+	Path *string `json:"path"`
+}
+
 type NameValue struct {
 	// Name of the header.
 	Name string `json:"name"`
 	// Value of the header.
 	Value string `json:"value"`
+}
+
+type ResponseSecurityDetailsResult struct {
+	// Common Name component of the Issuer field. from the certificate. This should only be used for informational
+	// purposes. Optional.
+	Issuer *string `json:"issuer"`
+	// The specific TLS protocol used. (e.g. `TLS 1.3`). Optional.
+	Protocol *string `json:"protocol"`
+	// Common Name component of the Subject field from the certificate. This should only be used for informational
+	// purposes. Optional.
+	SubjectName *string `json:"subjectName"`
+	// Unix timestamp (in seconds) specifying when this cert becomes valid. Optional.
+	ValidFrom *float64 `json:"validFrom"`
+	// Unix timestamp (in seconds) specifying when this cert becomes invalid. Optional.
+	ValidTo *float64 `json:"validTo"`
+}
+
+type ResponseServerAddrResult struct {
+	// IPv4 or IPV6 address of the server.
+	IpAddress string `json:"ipAddress"`
+	Port      int    `json:"port"`
 }
 
 type BrowserCloseOptions struct {
@@ -382,6 +412,10 @@ type BrowserNewContextOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
@@ -532,6 +566,10 @@ type BrowserNewPageOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
@@ -646,6 +684,20 @@ type BrowserNewPageOptions struct {
 	Viewport *Size `json:"viewport"`
 }
 
+type Bind struct {
+	Endpoint string `json:"endpoint"`
+}
+
+type BrowserBindOptions struct {
+	// Host to bind the web socket server to. When specified, a web socket server is created instead of a named pipe.
+	Host *string `json:"host"`
+	// Port to bind the web socket server to. When specified, a web socket server is created instead of a named pipe. Use
+	// `0` to let the OS pick an available port.
+	Port *int `json:"port"`
+	// Working directory associated with this browser server.
+	WorkspaceDir *string `json:"workspaceDir"`
+}
+
 type BrowserStartTracingOptions struct {
 	// specify custom categories to use instead of default.
 	Categories []string `json:"categories"`
@@ -752,6 +804,19 @@ type Geolocation struct {
 	Accuracy *float64 `json:"accuracy"`
 }
 
+type BrowserContextStorageStateOptions struct {
+	// Set to `true` to include [IndexedDB] in the storage
+	// state snapshot. If your application uses IndexedDB to store authentication tokens, like Firebase Authentication,
+	// enable this.
+	//
+	// [IndexedDB]: https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
+	IndexedDB *bool `json:"indexedDB"`
+	// The file path to save the storage state to. If “[object Object]” is a relative path, then it is resolved relative
+	// to current working directory. If no path is provided, storage state is still returned, but won't be saved to the
+	// disk.
+	Path *string `json:"path"`
+}
+
 type BrowserContextUnrouteAllOptions struct {
 	// Specifies whether to wait for already running handlers and what to do if they throw errors:
 	//  - `default` - do not wait for current handler calls (if any) to finish, if unrouted handler throws, it may
@@ -817,8 +882,19 @@ type BrowserTypeConnectOptions struct {
 }
 
 type BrowserTypeConnectOverCDPOptions struct {
+	// If specified, browser artifacts (such as traces and downloads) are saved into this directory.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// Additional HTTP headers to be sent with connect request. Optional.
 	Headers map[string]string `json:"headers"`
+	// Tells Playwright that it runs on the same host as the CDP server. It will enable certain optimizations that rely
+	// upon the file system being the same between Playwright and the Browser.
+	IsLocal *bool `json:"isLocal"`
+	// When true, Playwright will not apply its default overrides to the existing default browser context. Specifically,
+	// “[object Object]” is left at the browser's setting, focus emulation is not enabled, and media emulation options
+	// (such as “[object Object]”, “[object Object]”, “[object Object]”, and “[object Object]”) are not applied. Useful
+	// when attaching to a user's daily-driver browser where these overrides would interfere with existing browser state.
+	// New contexts created via [Browser.NewContext] are not affected. Defaults to `false`.
+	NoDefaults *bool `json:"noDefaults"`
 	// Slows down Playwright operations by the specified amount of milliseconds. Useful so that you can see what is going
 	// on. Defaults to 0.
 	SlowMo *float64 `json:"slowMo"`
@@ -834,6 +910,10 @@ type BrowserTypeLaunchOptions struct {
 	//
 	// [here]: https://peter.sh/experiments/chromium-command-line-switches/
 	Args []string `json:"args"`
+	// If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+	// is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+	// browser closes.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// Browser distribution channel.
 	// Use "chromium" to [opt in to new headless mode].
 	// Use "chrome", "chrome-beta", "chrome-dev", "chrome-canary", "msedge", "msedge-beta", "msedge-dev", or
@@ -844,13 +924,6 @@ type BrowserTypeLaunchOptions struct {
 	Channel *string `json:"channel"`
 	// Enable Chromium sandboxing. Defaults to `false`.
 	ChromiumSandbox *bool `json:"chromiumSandbox"`
-	// **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-	// “[object Object]” option will be set `false`.
-	//
-	// Deprecated: Use [debugging tools] instead.
-	//
-	// [debugging tools]: https://playwright.dev/docs/debug
-	Devtools *bool `json:"devtools"`
 	// If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
 	// is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
 	// created in is closed.
@@ -877,8 +950,7 @@ type BrowserTypeLaunchOptions struct {
 	HandleSIGTERM *bool `json:"handleSIGTERM"`
 	// Whether to run browser in headless mode. More details for
 	// [Chromium] and
-	// [Firefox]. Defaults to `true` unless the
-	// “[object Object]” option is `true`.
+	// [Firefox]. Defaults to `true`.
 	//
 	// [Chromium]: https://developers.google.com/web/updates/2017/04/headless-chrome
 	// [Firefox]: https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/
@@ -910,6 +982,10 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	//
 	// [here]: https://peter.sh/experiments/chromium-command-line-switches/
 	Args []string `json:"args"`
+	// If specified, artifacts (traces, videos, downloads, HAR files, etc.) are saved into this directory. The directory
+	// is not cleaned up when the browser closes. If not specified, a temporary directory is used and cleaned up when the
+	// browser closes.
+	ArtifactsDir *string `json:"artifactsDir"`
 	// When using [Page.Goto], [Page.Route], [Page.WaitForURL], [Page.ExpectRequest], or [Page.ExpectResponse] it takes
 	// the base URL in consideration by using the [`URL()`]
 	// constructor for building the corresponding URL. Unset by default. Examples:
@@ -953,18 +1029,15 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	//
 	// [prefers-colors-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 	ColorScheme *ColorScheme `json:"colorScheme"`
+	// Emulates `prefers-contrast` media feature, supported values are `no-preference`, `more`. See
+	// [Page.EmulateMedia] for more details. Passing `no-override` resets emulation to system defaults. Defaults to
+	// `no-preference`.
+	Contrast *Contrast `json:"contrast"`
 	// Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
 	// [emulating devices with device scale factor].
 	//
 	// [emulating devices with device scale factor]: https://playwright.dev/docs/emulation#devices
 	DeviceScaleFactor *float64 `json:"deviceScaleFactor"`
-	// **Chromium-only** Whether to auto-open a Developer Tools panel for each tab. If this option is `true`, the
-	// “[object Object]” option will be set `false`.
-	//
-	// Deprecated: Use [debugging tools] instead.
-	//
-	// [debugging tools]: https://playwright.dev/docs/debug
-	Devtools *bool `json:"devtools"`
 	// If specified, accepted downloads are downloaded into this directory. Otherwise, temporary directory is created and
 	// is deleted when browser is closed. In either case, the downloads are deleted when the browser context they were
 	// created in is closed.
@@ -1002,8 +1075,7 @@ type BrowserTypeLaunchPersistentContextOptions struct {
 	HasTouch *bool `json:"hasTouch"`
 	// Whether to run browser in headless mode. More details for
 	// [Chromium] and
-	// [Firefox]. Defaults to `true` unless the
-	// “[object Object]” option is `true`.
+	// [Firefox]. Defaults to `true`.
 	//
 	// [Chromium]: https://developers.google.com/web/updates/2017/04/headless-chrome
 	// [Firefox]: https://hacks.mozilla.org/2017/12/using-headless-mode-in-firefox/
@@ -1120,9 +1192,55 @@ type ConsoleMessageLocation struct {
 	// URL of the resource.
 	URL string `json:"url"`
 	// 0-based line number in the resource.
-	LineNumber int `json:"lineNumber"`
+	Line int `json:"line"`
 	// 0-based column number in the resource.
+	Column int `json:"column"`
+	// 0-based line number in the resource. Deprecated, use `line` instead.
+	LineNumber int `json:"lineNumber"`
+	// 0-based column number in the resource. Deprecated, use `column` instead.
 	ColumnNumber int `json:"columnNumber"`
+}
+
+type VirtualCredential struct {
+	// Base64url-encoded credential id.
+	Id string `json:"id"`
+	// Relying party id.
+	RpId string `json:"rpId"`
+	// Base64url-encoded user handle.
+	UserHandle string `json:"userHandle"`
+	// Base64url-encoded PKCS#8 (DER) private key.
+	PrivateKey string `json:"privateKey"`
+	// Base64url-encoded SPKI (DER) public key.
+	PublicKey string `json:"publicKey"`
+}
+
+type CredentialsCreateOptions struct {
+	// Base64url-encoded credential id. Auto-generated if omitted.
+	Id *string `json:"id"`
+	// Base64url-encoded PKCS#8 (DER) private key. Auto-generated if omitted.
+	PrivateKey *string `json:"privateKey"`
+	// Base64url-encoded SPKI (DER) public key. Auto-generated if omitted.
+	PublicKey *string `json:"publicKey"`
+	// Base64url-encoded user handle. Auto-generated if omitted.
+	UserHandle *string `json:"userHandle"`
+}
+
+type CredentialsGetOptions struct {
+	// Only return the credential with this base64url-encoded id.
+	Id *string `json:"id"`
+	// Only return credentials for this relying party id.
+	RpId *string `json:"rpId"`
+}
+
+type PausedDetail struct {
+	Location *PausedDetailLocation `json:"location"`
+	Title    string                `json:"title"`
+}
+
+type DebuggerLocation struct {
+	File   string `json:"file"`
+	Line   *int   `json:"line"`
+	Column *int   `json:"column"`
 }
 
 type Rect struct {
@@ -1722,14 +1840,21 @@ type FrameGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -2134,7 +2259,7 @@ type FrameExpectNavigationOptions struct {
 	// be changed by using the [BrowserContext.SetDefaultNavigationTimeout], [BrowserContext.SetDefaultTimeout],
 	// [Page.SetDefaultNavigationTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
-	// A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	// A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	// the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	// equal to the string.
 	URL any `json:"url"`
@@ -2204,14 +2329,21 @@ type FrameLocatorGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -2295,6 +2427,18 @@ type KeyboardTypeOptions struct {
 }
 
 type LocatorAriaSnapshotOptions struct {
+	// When `true`, appends each element's bounding box as `[box=x,y,width,height]` to the snapshot. Coordinates are
+	// relative to the viewport, in CSS pixels, as returned by
+	// [`Element.getBoundingClientRect()`].
+	// Defaults to `false`.
+	//
+	// [`Element.getBoundingClientRect()`]: https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+	Boxes *bool `json:"boxes"`
+	// When specified, limits the depth of the snapshot.
+	Depth *int `json:"depth"`
+	// When set to `"ai"`, returns a snapshot optimized for AI consumption. Defaults to `"default"`. See details for more
+	// information.
+	Mode *AriaSnapshotMode `json:"mode"`
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
@@ -2456,6 +2600,20 @@ type LocatorDragToOptions struct {
 	Trial *bool `json:"trial"`
 }
 
+type Payload struct {
+	Files any               `json:"files"`
+	Data  map[string]string `json:"data"`
+}
+
+type LocatorDropOptions struct {
+	// A point to use relative to the top-left corner of element padding box. If not specified, uses some visible point of
+	// the element.
+	Position *Position `json:"position"`
+	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
+	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	Timeout *float64 `json:"timeout"`
+}
+
 type LocatorElementHandleOptions struct {
 	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
 	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
@@ -2548,14 +2706,21 @@ type LocatorGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -3048,6 +3213,8 @@ type LocatorAssertionsToHaveCountOptions struct {
 }
 
 type LocatorAssertionsToHaveCSSOptions struct {
+	// Pseudo-element to read computed styles from.
+	Pseudo *PseudoElement `json:"pseudo"`
 	// Time to retry the assertion for in milliseconds. Defaults to `5000`.
 	Timeout *float64 `json:"timeout"`
 }
@@ -3398,14 +3565,21 @@ type PageGetByRoleOptions struct {
 	//
 	// [`aria-checked`]: https://www.w3.org/TR/wai-aria-1.2/#aria-checked
 	Checked *bool `json:"checked"`
+	// Option to match the [accessible description]. By
+	// default, matching is case-insensitive and searches for a substring, use “[object Object]” to control this behavior.
+	// Learn more about [accessible description].
+	//
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	// [accessible description]: https://w3c.github.io/accname/#dfn-accessible-description
+	Description any `json:"description"`
 	// An attribute that is usually set by `aria-disabled` or `disabled`.
 	// **NOTE** Unlike most other attributes, `disabled` is inherited through the DOM hierarchy. Learn more about
 	// [`aria-disabled`].
 	//
 	// [`aria-disabled`]: https://www.w3.org/TR/wai-aria-1.2/#aria-disabled
 	Disabled *bool `json:"disabled"`
-	// Whether “[object Object]” is matched exactly: case-sensitive and whole-string. Defaults to false. Ignored when
-	// “[object Object]” is a regular expression. Note that exact match still trims whitespace.
+	// Whether “[object Object]” and “[object Object]” are matched exactly: case-sensitive and whole-string. Defaults to
+	// false. Ignored when the value is a regular expression. Note that exact match still trims whitespace.
 	Exact *bool `json:"exact"`
 	// An attribute that is usually set by `aria-expanded`.
 	// Learn more about [`aria-expanded`].
@@ -3614,6 +3788,11 @@ type PageIsVisibleOptions struct {
 	//
 	// Deprecated: This option is ignored. [Page.IsVisible] does not wait for the element to become visible and returns immediately.
 	Timeout *float64 `json:"timeout"`
+}
+
+type PageConsoleMessagesOptions struct {
+	// Controls which messages are returned:
+	Filter *ConsoleMessagesFilter `json:"filter"`
 }
 
 type PageLocatorOptions struct {
@@ -3869,6 +4048,24 @@ type PageSetInputFilesOptions struct {
 	Timeout *float64 `json:"timeout"`
 }
 
+type PageAriaSnapshotOptions struct {
+	// When `true`, appends each element's bounding box as `[box=x,y,width,height]` to the snapshot. Coordinates are
+	// relative to the viewport, in CSS pixels, as returned by
+	// [`Element.getBoundingClientRect()`].
+	// Defaults to `false`.
+	//
+	// [`Element.getBoundingClientRect()`]: https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
+	Boxes *bool `json:"boxes"`
+	// When specified, limits the depth of the snapshot.
+	Depth *int `json:"depth"`
+	// When set to `"ai"`, returns a snapshot optimized for AI consumption: including element references like `[ref=e2]`
+	// and snapshots of `<iframe>`s. Defaults to `"default"`.
+	Mode *AriaSnapshotMode `json:"mode"`
+	// Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
+	// be changed by using the [BrowserContext.SetDefaultTimeout] or [Page.SetDefaultTimeout] methods.
+	Timeout *float64 `json:"timeout"`
+}
+
 type PageTapOptions struct {
 	// Whether to bypass the [actionability] checks. Defaults to `false`.
 	//
@@ -4027,7 +4224,7 @@ type PageExpectNavigationOptions struct {
 	// be changed by using the [BrowserContext.SetDefaultNavigationTimeout], [BrowserContext.SetDefaultTimeout],
 	// [Page.SetDefaultNavigationTimeout] or [Page.SetDefaultTimeout] methods.
 	Timeout *float64 `json:"timeout"`
-	// A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	// A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	// the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	// equal to the string.
 	URL any `json:"url"`
@@ -4125,6 +4322,11 @@ type PageWaitForEventOptions struct {
 	Timeout *float64 `json:"timeout"`
 }
 
+type PageAssertionsToMatchAriaSnapshotOptions struct {
+	// Time to retry the assertion for in milliseconds. Defaults to `5000`.
+	Timeout *float64 `json:"timeout"`
+}
+
 type PageAssertionsToHaveTitleOptions struct {
 	// Time to retry the assertion for in milliseconds. Defaults to `5000`.
 	Timeout *float64 `json:"timeout"`
@@ -4179,27 +4381,6 @@ type RequestTiming struct {
 	// connection is closed, whichever comes first. The value is given in milliseconds relative to `startTime`, -1 if not
 	// available.
 	ResponseEnd float64 `json:"responseEnd"`
-}
-
-type ResponseSecurityDetailsResult struct {
-	// Common Name component of the Issuer field. from the certificate. This should only be used for informational
-	// purposes. Optional.
-	Issuer *string `json:"issuer"`
-	// The specific TLS protocol used. (e.g. `TLS 1.3`). Optional.
-	Protocol *string `json:"protocol"`
-	// Common Name component of the Subject field from the certificate. This should only be used for informational
-	// purposes. Optional.
-	SubjectName *string `json:"subjectName"`
-	// Unix timestamp (in seconds) specifying when this cert becomes valid. Optional.
-	ValidFrom *float64 `json:"validFrom"`
-	// Unix timestamp (in seconds) specifying when this cert becomes invalid. Optional.
-	ValidTo *float64 `json:"validTo"`
-}
-
-type ResponseServerAddrResult struct {
-	// IPv4 or IPV6 address of the server.
-	IpAddress string `json:"ipAddress"`
-	Port      int    `json:"port"`
 }
 
 type RouteContinueOptions struct {
@@ -4261,6 +4442,45 @@ type RouteFulfillOptions struct {
 	Status *int `json:"status"`
 }
 
+type ScreencastStartOptions struct {
+	// Callback that receives JPEG-encoded frame data along with the page viewport size at the time of capture.
+	OnFrame func(OnFrame) `json:"onFrame"`
+	// Path where the video should be saved when the screencast is stopped. When provided, video recording is started.
+	Path *string `json:"path"`
+	// The quality of the image, between 0-100.
+	Quality *int `json:"quality"`
+	// Specifies the dimensions of screencast frames. The actual frame is scaled to preserve the page's aspect ratio and
+	// may be smaller than these bounds. If a screencast is already active (e.g. started by tracing or video recording),
+	// the existing configuration takes precedence and the frame size may exceed these bounds or this option may be
+	// ignored. If not specified the size will be equal to page viewport scaled down to fit into 800×800.
+	Size *Size `json:"size"`
+}
+
+type ScreencastShowOverlayOptions struct {
+	// Duration in milliseconds after which the overlay is automatically removed. Overlay stays until dismissed if not
+	// provided.
+	Duration *float64 `json:"duration"`
+}
+
+type ScreencastShowChapterOptions struct {
+	// Optional description text displayed below the title.
+	Description *string `json:"description"`
+	// Duration in milliseconds after which the overlay is automatically removed. Defaults to `2000`.
+	Duration *float64 `json:"duration"`
+}
+
+type ScreencastShowActionsOptions struct {
+	// Cursor decoration shown for pointer actions. `"pointer"` (the default) renders a mouse pointer that animates from
+	// the previous action point to the next one. `"none"` disables the cursor decoration.
+	Cursor *ScreencastCursor `json:"cursor"`
+	// How long each annotation is displayed in milliseconds. Defaults to `500`.
+	Duration *float64 `json:"duration"`
+	// Font size of the action title in pixels. Defaults to `24`.
+	FontSize *int `json:"fontSize"`
+	// Position of the action title overlay. Defaults to `"top-right"`.
+	Position *AnnotatePosition `json:"position"`
+}
+
 type SelectorsRegisterOptions struct {
 	// Whether to run this selector engine in isolated JavaScript environment. This environment has access to the same
 	// DOM, but not any JavaScript objects from the frame's scripts. Defaults to `false`. Note that running as a content
@@ -4269,6 +4489,10 @@ type SelectorsRegisterOptions struct {
 }
 
 type TracingStartOptions struct {
+	// When enabled, the trace is written to an unarchived file that is updated in real time as actions occur, instead of
+	// caching changes and archiving them into a zip file at the end. This is useful for live trace viewing during test
+	// execution.
+	Live *bool `json:"live"`
 	// If specified, intermediate trace files are going to be saved into the files with the given name prefix inside the
 	// “[object Object]” directory specified in [BrowserType.Launch]. To specify the final trace zip file name, you need
 	// to pass `path` option to [Tracing.Stop] instead.
@@ -4294,10 +4518,35 @@ type TracingStartChunkOptions struct {
 	Title *string `json:"title"`
 }
 
+type TracingStartHarOptions struct {
+	// Optional setting to control resource content management. If `omit` is specified, content is not persisted. If
+	// `attach` is specified, resources are persisted as separate files or entries in the ZIP archive. If `embed` is
+	// specified, content is stored inline the HAR file as per HAR specification. Defaults to `attach` for `.zip` output
+	// files and to `embed` for all other file extensions.
+	Content *HarContentPolicy `json:"content"`
+	// When set to `minimal`, only record information necessary for routing from HAR. This omits sizes, timing, page,
+	// cookies, security and other types of HAR information that are not used when replaying from HAR. Defaults to `full`.
+	Mode *HarMode `json:"mode"`
+	// Only used together with `content: 'attach'`. When set, response bodies are placed in this directory instead of next
+	// to the HAR file. Not compatible with a `.zip` HAR file.
+	ResourcesDir *string `json:"resourcesDir"`
+	// A glob or regex pattern to filter requests that are stored in the HAR. Defaults to none.
+	URLFilter any `json:"urlFilter"`
+}
+
 type TracingGroupOptions struct {
 	// Specifies a custom location for the group to be shown in the trace viewer. Defaults to the location of the
 	// [Tracing.Group] call.
 	Location *TracingGroupOptionsLocation `json:"location"`
+}
+
+type WebErrorLocation struct {
+	// URL of the resource.
+	URL string `json:"url"`
+	// 0-based line number in the resource.
+	Line int `json:"line"`
+	// 0-based column number in the resource.
+	Column int `json:"column"`
 }
 
 type WebSocketExpectEventOptions struct {
@@ -4325,6 +4574,11 @@ type WebSocketRouteCloseOptions struct {
 	//
 	// [close reason]: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/close#reason
 	Reason *string `json:"reason"`
+}
+
+type WebStorageItem struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type ClientCertificate struct {
@@ -4376,12 +4630,15 @@ type Origin struct {
 }
 
 type RecordVideo struct {
-	// Path to the directory to put videos into.
-	Dir string `json:"dir"`
+	// Path to the directory to put videos into. If not specified, the videos will be stored in `artifactsDir` (see
+	// [BrowserType.Launch] options).
+	Dir *string `json:"dir"`
 	// Optional dimensions of the recorded videos. If not specified the size will be equal to `viewport` scaled down to
 	// fit into 800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of
 	// each page will be scaled down if necessary to fit the specified size.
 	Size *Size `json:"size"`
+	// If specified, enables visual annotations on interacted elements during video recording.
+	ShowActions *ShowAction `json:"showActions"`
 }
 
 type OptionalStorageState struct {
@@ -4389,6 +4646,12 @@ type OptionalStorageState struct {
 	Cookies []OptionalCookie `json:"cookies"`
 	// localStorage to set for context
 	Origins []Origin `json:"origins"`
+}
+
+type PausedDetailLocation struct {
+	File   string `json:"file"`
+	Line   *int   `json:"line"`
+	Column *int   `json:"column"`
 }
 
 type Position struct {
@@ -4407,8 +4670,28 @@ type Margin struct {
 	Left *string `json:"left"`
 }
 
+type OnFrame struct {
+	// JPEG-encoded frame data.
+	Data []byte `json:"data"`
+	// The timestamp of when the frame was presented by the browser, in milliseconds since the Unix epoch.
+	Timestamp float64 `json:"timestamp"`
+	// Width of the page viewport at the time the frame was captured.
+	ViewportWidth int `json:"viewportWidth"`
+	// Height of the page viewport at the time the frame was captured.
+	ViewportHeight int `json:"viewportHeight"`
+}
+
 type TracingGroupOptionsLocation struct {
 	File   string `json:"file"`
 	Line   *int   `json:"line"`
 	Column *int   `json:"column"`
+}
+
+type ShowAction struct {
+	// How long each annotation is displayed in milliseconds. Defaults to `500`.
+	Duration *float64 `json:"duration"`
+	// Position of the action title overlay. Defaults to `"top-right"`.
+	Position *AnnotatePosition `json:"position"`
+	// Font size of the action title in pixels. Defaults to `24`.
+	FontSize *int `json:"fontSize"`
 }

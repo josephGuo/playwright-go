@@ -1,9 +1,9 @@
 package playwright
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
-	"path"
 	"strings"
 )
 
@@ -44,27 +44,26 @@ func (pa *pageAssertionsImpl) expectOnFrame(
 	overrides := map[string]any{
 		"expression": expression,
 	}
-	result, err := frame.channel.SendReturnAsDict("expect", options, overrides)
-	if err != nil {
-		return err
-	}
 
 	var (
 		received any
 		matches  bool
 		log      []string
 	)
-
-	if v, ok := result["received"]; ok {
-		received = parseResult(v)
-	}
-	if v, ok := result["matches"]; ok {
-		matches = v.(bool)
-	}
-	if v, ok := result["log"]; ok {
-		for _, l := range v.([]any) {
-			log = append(log, l.(string))
+	_, err := frame.channel.SendReturnAsDict("expect", options, overrides)
+	if err != nil {
+		// Since v1.61 a failed assertion is reported as a server error carrying
+		// structured errorDetails rather than a `{ matches: false }` result.
+		var detailed *errorWithDetails
+		if !errors.As(err, &detailed) {
+			return err
 		}
+		matches = options.IsNot
+		received = parseExpectReceived(detailed.details["received"])
+		log = detailed.log
+	} else {
+		// No error means the assertion matched.
+		matches = !options.IsNot
 	}
 
 	if matches == pa.isNot {
@@ -109,9 +108,14 @@ func (pa *pageAssertionsImpl) ToHaveURL(urlOrRegExp any, options ...PageAssertio
 
 	baseURL := pa.actualPage.Context().(*browserContextImpl).options.BaseURL
 	if urlPath, ok := urlOrRegExp.(string); ok && baseURL != nil {
-		u, _ := url.Parse(*baseURL)
-		u.Path = path.Join(u.Path, urlPath)
-		urlOrRegExp = u.String()
+		// Resolve against the base URL the same way the browser's `new URL(given,
+		// base)` does, rather than naive path joining (matching upstream
+		// constructURLBasedOnBaseURL).
+		if base, err := url.Parse(*baseURL); err == nil {
+			if given, err := url.Parse(urlPath); err == nil {
+				urlOrRegExp = base.ResolveReference(given).String()
+			}
+		}
 	}
 
 	expectedValues, err := toExpectedTextValues([]any{urlOrRegExp}, false, false, ignoreCase)
@@ -123,6 +127,19 @@ func (pa *pageAssertionsImpl) ToHaveURL(urlOrRegExp any, options ...PageAssertio
 		frameExpectOptions{ExpectedText: expectedValues, Timeout: timeout},
 		urlOrRegExp,
 		"Page URL expected to be",
+	)
+}
+
+func (pa *pageAssertionsImpl) ToMatchAriaSnapshot(expected string, options ...PageAssertionsToMatchAriaSnapshotOptions) error {
+	var timeout *float64
+	if len(options) == 1 {
+		timeout = options[0].Timeout
+	}
+	return pa.expect(
+		"to.match.aria",
+		frameExpectOptions{ExpectedValue: expected, Timeout: timeout},
+		expected,
+		"Page expected to match ARIA snapshot",
 	)
 }
 

@@ -10,17 +10,15 @@ type APIRequest interface {
 
 // This API is used for the Web API testing. You can use it to trigger API endpoints, configure micro-services,
 // prepare environment or the service to your e2e test.
-// Each Playwright browser context has associated with it [APIRequestContext] instance which shares cookie storage
-// with the browser context and can be accessed via [BrowserContext.Request] or [Page.Request]. It is also possible to
-// create a new APIRequestContext instance manually by calling [APIRequest.NewContext].
+// Each Playwright browser context has an associated [APIRequestContext], accessible via [BrowserContext.Request] or
+// [Page.Request] (these return the
+// **same instance** — `page.request` is a shortcut for `page.context().request`). You can also create a standalone,
+// isolated instance with [APIRequest.NewContext].
 // **Cookie management**
-// [APIRequestContext] returned by [BrowserContext.Request] and [Page.Request] shares cookie storage with the
-// corresponding [BrowserContext]. Each API request will have `Cookie` header populated with the values from the
-// browser context. If the API response contains `Set-Cookie` header it will automatically update [BrowserContext]
-// cookies and requests made from the page will pick them up. This means that if you log in using this API, your e2e
-// test will be logged in and vice versa.
-// If you want API requests to not interfere with the browser cookies you should create a new [APIRequestContext] by
-// calling [APIRequest.NewContext]. Such `APIRequestContext` object will have its own isolated cookie storage.
+// The [APIRequestContext] returned by [BrowserContext.Request] and
+// [Page.Request] uses the same cookie jar as its [BrowserContext]:
+// If you want API requests that do **not** share cookies with the browser, create an isolated context via
+// [APIRequest.NewContext]. Such `APIRequestContext` object will have its own isolated cookie storage.
 type APIRequestContext interface {
 	// Sends HTTP(S) [DELETE] request and returns its
 	// response. The method will populate request cookies from the context and update context cookies from the response.
@@ -89,7 +87,9 @@ type APIRequestContext interface {
 
 	// Returns storage state for this request context, contains current cookies and local storage snapshot if it was
 	// passed to the constructor.
-	StorageState(path ...string) (*StorageState, error)
+	StorageState(options ...APIRequestContextStorageStateOptions) (*StorageState, error)
+
+	Tracing() Tracing
 }
 
 // [APIResponse] class represents responses returned by [APIRequestContext.Get] and similar methods.
@@ -114,6 +114,14 @@ type APIResponse interface {
 	// Contains a boolean stating whether the response was successful (status in the range 200-299) or not.
 	Ok() bool
 
+	// Returns SSL and other security information. Resolves to `null` for non-HTTPS responses. For redirected requests,
+	// returns the information for the last request in the redirect chain.
+	SecurityDetails() (*ResponseSecurityDetailsResult, error)
+
+	// Returns the IP address and port of the server. Resolves to `null` if the server address is not available. For
+	// redirected requests, returns the information for the last request in the redirect chain.
+	ServerAddr() (*ResponseServerAddrResult, error)
+
 	// Contains the status code of the response (e.g., 200 for a success).
 	Status() int
 
@@ -130,8 +138,7 @@ type APIResponse interface {
 // The [APIResponseAssertions] class provides assertion methods that can be used to make assertions about the
 // [APIResponse] in the tests.
 type APIResponseAssertions interface {
-	// Makes the assertion check for the opposite condition. For example, this code tests that the response status is not
-	// successful:
+	// Makes the assertion check for the opposite condition.
 	Not() APIResponseAssertions
 
 	// Ensures the response status code is within `200..299` range.
@@ -141,6 +148,9 @@ type APIResponseAssertions interface {
 // A Browser is created via [BrowserType.Launch]. An example of using a [Browser] to create a [Page]:
 type Browser interface {
 	EventEmitter
+	// Emitted when a new browser context is created.
+	OnContext(fn func(BrowserContext))
+
 	// Emitted when Browser gets disconnected from the browser application. This might happen because of one of the
 	// following:
 	//  - Browser application is closed or crashed.
@@ -183,6 +193,11 @@ type Browser interface {
 	// to control their exact life times.
 	NewPage(options ...BrowserNewPageOptions) (Page, error)
 
+	// Binds the browser to a named pipe or web socket, making it available for other clients to connect to.
+	//
+	//  title: Title of the browser server, used for identification.
+	Bind(title string, options ...BrowserBindOptions) (*Bind, error)
+
 	// **NOTE** This API controls
 	// [Chromium Tracing] which is a low-level
 	// chromium-specific debugging tool. API to control [Playwright Tracing] could be found
@@ -206,6 +221,9 @@ type Browser interface {
 	// [here]: ./class-tracing
 	StopTracing() ([]byte, error)
 
+	// Unbinds the browser server previously bound with [Browser.Bind].
+	Unbind() error
+
 	// Returns the browser version.
 	Version() string
 }
@@ -225,6 +243,13 @@ type BrowserContext interface {
 	// Playwright has ability to mock clock and passage of time.
 	Clock() Clock
 
+	// Virtual WebAuthn authenticator for this context. Lets tests seed credentials and intercept
+	// `navigator.credentials.create()` / `navigator.credentials.get()` ceremonies.
+	Credentials() Credentials
+
+	// Debugger allows to pause and resume the execution.
+	Debugger() (Debugger, error)
+
 	// Emitted when Browser context gets closed. This might happen because of one of the following:
 	//  - Browser context is closed.
 	//  - Browser application is closed or crashed.
@@ -243,6 +268,23 @@ type BrowserContext interface {
 	// [freeze]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/EventLoop#never_blocking
 	OnDialog(fn func(Dialog))
 
+	// Emitted when attachment download started in any page belonging to this context. User can access basic file
+	// operations on downloaded content via the passed [Download] instance. See also [Page.OnDownload] to receive events
+	// about a specific page.
+	OnDownload(fn func(Download))
+
+	// Emitted when a frame is attached in any page belonging to this context. See also [Page.OnFrameAttached] to receive
+	// events about a specific page.
+	OnFrameAttached(fn func(Frame))
+
+	// Emitted when a frame is detached in any page belonging to this context. See also [Page.OnFrameDetached] to receive
+	// events about a specific page.
+	OnFrameDetached(fn func(Frame))
+
+	// Emitted when a frame is navigated to a new url in any page belonging to this context. See also
+	// [Page.OnFrameNavigated] to receive events about navigations in a specific page.
+	OnFrameNavigated(fn func(Frame))
+
 	// The event is emitted when a new Page is created in the BrowserContext. The page may still be loading. The event
 	// will also fire for popup pages. See also [Page.OnPopup] to receive events about popups relevant to a specific page.
 	// The earliest moment that page is available is when it has navigated to the initial url. For example, when opening a
@@ -253,6 +295,15 @@ type BrowserContext interface {
 	// **NOTE** Use [Page.WaitForLoadState] to wait until the page gets to a particular state (you should not need it in
 	// most cases).
 	OnPage(fn func(Page))
+
+	// Emitted when a page in this context is closed. See also [Page.OnClose] to receive events about a specific page.
+	OnPageClose(fn func(Page))
+
+	// Emitted when the JavaScript [`load`] event is dispatched
+	// in any page belonging to this context. See also [Page.OnLoad] to receive events about a specific page.
+	//
+	// [`load`]: https://developer.mozilla.org/en-US/docs/Web/Events/load
+	OnPageLoad(fn func(Page))
 
 	// Emitted when exception is unhandled in any of the pages in this context. To listen for errors from a particular
 	// page, use [Page.OnPageError] instead.
@@ -325,7 +376,7 @@ type BrowserContext interface {
 	//
 	// 1. name: Name of the function on the window object.
 	// 2. binding: Callback function that will be called in the Playwright's context.
-	ExposeBinding(name string, binding BindingCallFunction, handle ...bool) error
+	ExposeBinding(name string, binding BindingCallFunction) error
 
 	// The method adds a function called “[object Object]” on the `window` object of every frame in every page in the
 	// context. When called, the function executes “[object Object]” and returns a [Promise] which resolves to the return
@@ -363,7 +414,11 @@ type BrowserContext interface {
 	//    - `'notifications'`
 	//    - `'payment-handler'`
 	//    - `'storage-access'`
+	//    - `'screen-wake-lock'`
 	GrantPermissions(permissions []string, options ...BrowserContextGrantPermissionsOptions) error
+
+	// Indicates that the browser context is in the process of closing or has already been closed.
+	IsClosed() bool
 
 	// **NOTE** CDP sessions are only supported on Chromium-based browsers.
 	// Returns the newly created session.
@@ -458,7 +513,13 @@ type BrowserContext interface {
 
 	// Returns storage state for this browser context, contains current cookies, local storage snapshot and IndexedDB
 	// snapshot.
-	StorageState(path ...string) (*StorageState, error)
+	StorageState(options ...BrowserContextStorageStateOptions) (*StorageState, error)
+
+	// Clears the existing cookies, local storage and IndexedDB entries for all origins and sets the new storage state.
+	//
+	//  storageStatePath: Populates context with given storage state. This option can be used to initialize context with logged-in
+	//    information obtained via [BrowserContext.StorageState]. Path to the file with saved storage state.
+	SetStorageState(storageStatePath string) error
 
 	Tracing() Tracing
 
@@ -468,7 +529,7 @@ type BrowserContext interface {
 	// Removes a route created with [BrowserContext.Route]. When “[object Object]” is not specified, removes all routes
 	// for the “[object Object]”.
 	//
-	// 1. url: A glob pattern, regex pattern or predicate receiving [URL] used to register a routing with [BrowserContext.Route].
+	// 1. url: A glob pattern, regex pattern, or predicate receiving [URL] used to register a routing with [BrowserContext.Route].
 	// 2. handler: Optional handler function used to register a routing with [BrowserContext.Route].
 	Unroute(url any, handler ...routeHandler) error
 
@@ -505,8 +566,8 @@ type BrowserType interface {
 	// **NOTE** The major and minor version of the Playwright instance that connects needs to match the version of
 	// Playwright that launches the browser (1.2.3 → is compatible with 1.2.x).
 	//
-	//  wsEndpoint: A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
-	Connect(wsEndpoint string, options ...BrowserTypeConnectOptions) (Browser, error)
+	//  endpoint: A Playwright browser websocket endpoint to connect to. You obtain this endpoint via `BrowserServer.wsEndpoint`.
+	Connect(endpoint string, options ...BrowserTypeConnectOptions) (Browser, error)
 
 	// This method attaches Playwright to an existing browser instance using the Chrome DevTools Protocol.
 	// The default browser context is accessible via [Browser.Contexts].
@@ -568,6 +629,9 @@ type BrowserType interface {
 // [DevTools Protocol Viewer]: https://chromedevtools.github.io/devtools-protocol/
 type CDPSession interface {
 	EventEmitter
+	// Emitted when the session is closed, either because the target was closed or `session.detach()` was called.
+	OnClose(fn func(CDPSession))
+
 	// Detaches the CDPSession from the target. Once detached, the CDPSession object won't emit any events and can't be
 	// used to send messages.
 	Detach() error
@@ -658,6 +722,9 @@ type ConsoleMessage interface {
 	// The text of the console message.
 	String() string
 
+	// The timestamp of the console message in milliseconds since the Unix epoch.
+	Timestamp() (float64, error)
+
 	// One of the following values: `log`, `debug`, `info`, `error`, `warning`, `dir`, `dirxml`, `table`,
 	// `trace`, `clear`, `startGroup`, `startGroupCollapsed`, `endGroup`, `assert`, `profile`,
 	// `profileEnd`, `count`, `timeEnd`.
@@ -666,6 +733,77 @@ type ConsoleMessage interface {
 	// The web worker or service worker that produced this console message, if any. Note that console messages from web
 	// workers also have non-null [ConsoleMessage.Page].
 	Worker() (Worker, error)
+}
+
+// `Credentials` is a virtual WebAuthn authenticator scoped to a [BrowserContext]. It lets tests register passkeys and
+// answer `navigator.credentials.create()` / `navigator.credentials.get()` ceremonies in the page, without a real
+// authenticator or hardware security key.
+// There are two common ways to use it:
+// **Usage: seed a known credential**
+// **Usage: capture a passkey, then reuse it**
+// **Defaults**
+type Credentials interface {
+	// Installs the virtual WebAuthn authenticator into the context, overriding `navigator.credentials.create()` and
+	// `navigator.credentials.get()` in all current and future pages. Call this before the page first touches
+	// `navigator.credentials`.
+	// Required: until [Credentials.Install] is called, no interception is in place and the page sees the platform's
+	// native (or absent) WebAuthn behaviour. Seeding credentials with [Credentials.Create] without installing populates
+	// the authenticator, but the page will never see those credentials.
+	Install() error
+
+	// Seeds a virtual WebAuthn credential and returns it.
+	// With only “[object Object]”, generates a fresh **ECDSA P-256** keypair, credential id and user handle. The seeded
+	// credential is discoverable (resident), so the page can resolve it from both username-then-passkey and usernameless
+	// passkey flows. The returned object carries the private and public keys, so it can be persisted to disk and
+	// re-seeded in a later test.
+	// To **import a known credential**, supply all four of “[object Object]”, “[object Object]”, “[object Object]” and
+	// “[object Object]” together.
+	// Call [Credentials.Install] before navigating to a page that uses WebAuthn.
+	//
+	//  rpId: Relying party id (typically the site's effective domain).
+	Create(rpId string, options ...CredentialsCreateOptions) (*VirtualCredential, error)
+
+	// Removes a credential from the authenticator by its id. Works for any credential currently held — both those seeded
+	// with [Credentials.Create] and those the page registered itself by calling `navigator.credentials.create()`.
+	//
+	//  id: Base64url-encoded credential id.
+	Delete(id string) error
+
+	// Returns every credential currently held by the authenticator, optionally filtered by “[object Object]” or
+	// “[object Object]”. This includes both credentials seeded with [Credentials.Create] and credentials the page
+	// registered itself by calling `navigator.credentials.create()`.
+	// Each returned credential includes its private and public keys, so a passkey the app just registered can be saved
+	// and re-seeded into a later test with [Credentials.Create] — see the second example in the class overview.
+	Get(options ...CredentialsGetOptions) ([]VirtualCredential, error)
+}
+
+// API for controlling the Playwright debugger. The debugger allows pausing script execution and inspecting the page.
+// Obtain the debugger instance via [BrowserContext.Debugger].
+type Debugger interface {
+	// Emitted when the debugger pauses or resumes.
+	OnPausedStateChanged(fn func())
+
+	// Returns details about the currently paused call. Returns `null` if the debugger is not paused.
+	PausedDetails() (*PausedDetail, error)
+
+	// Configures the debugger to pause before the next action is executed.
+	// Throws if the debugger is already paused. Use [Debugger.Next] or [Debugger.RunTo] to step while paused.
+	// Note that [Page.Pause] is equivalent to a "debugger" statement — it pauses execution at the call site immediately.
+	// On the contrary, [Debugger.RequestPause] is equivalent to "pause on next statement" — it configures the debugger to
+	// pause before the next action is executed.
+	RequestPause() error
+
+	// Resumes script execution. Throws if the debugger is not paused.
+	Resume() error
+
+	// Resumes script execution and pauses again before the next action. Throws if the debugger is not paused.
+	Next() error
+
+	// Resumes script execution and pauses when an action originates from the given source location. Throws if the
+	// debugger is not paused.
+	//
+	//  location: The source location to pause at.
+	RunTo(location DebuggerLocation) error
 }
 
 // [Dialog] objects are dispatched by page via the [Page.OnDialog] event.
@@ -1927,7 +2065,7 @@ type Frame interface {
 
 	// Waits for the frame to navigate to the given URL.
 	//
-	//  url: A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	//  url: A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	//    the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	//    equal to the string.
 	WaitForURL(url any, options ...FrameWaitForURLOptions) error
@@ -2238,6 +2376,9 @@ type Locator interface {
 	//   - listitem:
 	//     - link "About"
 	// ```
+	// An AI-optimized snapshot, controlled by “[object Object]”, is different from a default snapshot:
+	//  1. Includes element references `[ref=e2]`. 2. Does not wait for an element matching the locator, and throws when
+	//    no elements match. 3. Includes snapshots of `<iframe>`s inside the target.
 	//
 	// [aria snapshots]: https://playwright.dev/docs/aria-snapshots
 	// [YAML]: https://yaml.org/spec/1.2.2/
@@ -2345,8 +2486,7 @@ type Locator interface {
 	Describe(description string) Locator
 
 	// Returns locator description previously set with [Locator.Describe]. Returns `null` if no custom description has
-	// been set. Prefer `Locator.toString()` for a human-readable representation, as it uses the description when
-	// available.
+	// been set.
 	Description() (string, error)
 
 	// Programmatically dispatch an event on the matching element.
@@ -2398,6 +2538,20 @@ type Locator interface {
 	//
 	//  target: Locator of the element to drag to.
 	DragTo(target Locator, options ...LocatorDragToOptions) error
+
+	// Simulate an external drag-and-drop of files or clipboard-like data onto this locator.
+	//
+	// # Details
+	//
+	// Dispatches the native `dragenter`, `dragover`, and `drop` events at the center of the target element with a
+	// synthetic [DataTransfer] carrying the provided files and/or data entries. Works cross-browser by constructing the
+	// [DataTransfer] in the page context.
+	// If the target element's `dragover` listener does not call `preventDefault()`, the target is considered to have
+	// rejected the drop: Playwright dispatches `dragleave` and this method throws.
+	//
+	//  payload: Data to drop onto the target. Provide `files` (file paths or in-memory buffers), `data` (a mime-type → string map
+	//    for clipboard-like content such as `text/plain`, `text/html`, `text/uri-list`), or both.
+	Drop(payload Payload, options ...LocatorDropOptions) error
 
 	// Resolves given locator to the first matching DOM element. If there are no matching elements, waits for one. If
 	// multiple elements match the locator, throws.
@@ -2574,6 +2728,9 @@ type Locator interface {
 	//  text: Text to locate the element for.
 	GetByTitle(text any, options ...LocatorGetByTitleOptions) Locator
 
+	// Hides the element highlight previously added by [Locator.Highlight].
+	HideHighlight() error
+
 	// Highlight the corresponding element(s) on the screen. Useful for debugging, don't commit the code that uses
 	// [Locator.Highlight].
 	Highlight() error
@@ -2681,6 +2838,11 @@ type Locator interface {
 	//
 	// [Learn more about locators]: https://playwright.dev/docs/locators
 	Locator(selectorOrLocator any, options ...LocatorLocatorOptions) Locator
+
+	// Returns a new locator that uses best practices for referencing the matched element, prioritizing test ids, aria
+	// roles, and other user-facing attributes over CSS selectors. This is useful for converting implementation-detail
+	// selectors into more resilient, human-readable locators.
+	Normalize() Locator
 
 	// Returns locator to the n-th matching element. It's zero based, `nth(0)` selects the first element.
 	Nth(index int) Locator
@@ -2884,8 +3046,7 @@ type Locator interface {
 // The [LocatorAssertions] class provides assertion methods that can be used to make assertions about the [Locator]
 // state in the tests.
 type LocatorAssertions interface {
-	// Makes the assertion check for the opposite condition. For example, this code tests that the Locator doesn't contain
-	// text `"error"`:
+	// Makes the assertion check for the opposite condition.
 	Not() LocatorAssertions
 
 	// Ensures that [Locator] points to an element that is
@@ -3400,7 +3561,7 @@ type Page interface {
 	//
 	// 1. name: Name of the function on the window object.
 	// 2. binding: Callback function that will be called in the Playwright's context.
-	ExposeBinding(name string, binding BindingCallFunction, handle ...bool) error
+	ExposeBinding(name string, binding BindingCallFunction) error
 
 	// The method adds a function called “[object Object]” on the `window` object of every frame in the page. When called,
 	// the function executes “[object Object]” and returns a [Promise] which resolves to the return value of
@@ -3576,6 +3737,9 @@ type Page interface {
 	// [upstream issue]: https://bugs.chromium.org/p/chromium/issues/detail?id=761295
 	Goto(url string, options ...PageGotoOptions) (Response, error)
 
+	// Hide all locator highlight overlays previously added by [Locator.Highlight] on this page.
+	HideHighlight() error
+
 	// This method hovers over an element matching “[object Object]” by performing the following steps:
 	//  1. Find an element matching “[object Object]”. If there is none, wait until a matching element is attached to
 	//    the DOM.
@@ -3701,8 +3865,25 @@ type Page interface {
 
 	Keyboard() Keyboard
 
+	// Clears all stored console messages from this page. Subsequent calls to [Page.ConsoleMessages] will only return
+	// messages logged after the clear.
+	ClearConsoleMessages() error
+
+	// Clears all stored page errors from this page. Subsequent calls to [Page.PageErrors] will only return errors thrown
+	// after the clear.
+	ClearPageErrors() error
+
+	// Provides access to the page's `localStorage` for the current origin. See [WebStorage].
+	LocalStorage() WebStorage
+
+	// Provides access to the page's `sessionStorage` for the current origin. See [WebStorage].
+	SessionStorage() WebStorage
+
 	// Returns up to (currently) 200 last console messages from this page. See [Page.OnConsole] for more details.
-	ConsoleMessages() ([]ConsoleMessage, error)
+	ConsoleMessages(options ...PageConsoleMessagesOptions) ([]ConsoleMessage, error)
+
+	// Returns up to (currently) 200 last page errors from this page. See [Page.OnPageError] for more details.
+	PageErrors() ([]string, error)
 
 	// The method returns an element locator that can be used to perform actions on this page / frame. Locator is resolved
 	// to the element immediately before performing an action, so a series of actions on the same locator can in fact be
@@ -3883,6 +4064,9 @@ type Page interface {
 	// 2. handler: Handler function to route the WebSocket.
 	RouteWebSocket(url any, handler func(WebSocketRoute)) error
 
+	// [Screencast] object associated with this page.
+	Screencast() (Screencast, error)
+
 	// Returns the buffer with the captured screenshot.
 	Screenshot(options ...PageScreenshotOptions) ([]byte, error)
 
@@ -3990,6 +4174,11 @@ type Page interface {
 	// 2. height: Page height in pixels.
 	SetViewportSize(width int, height int) error
 
+	// Captures the aria snapshot of the page. Read more about [aria snapshots].
+	//
+	// [aria snapshots]: https://playwright.dev/docs/aria-snapshots
+	AriaSnapshot(options ...PageAriaSnapshotOptions) (string, error)
+
 	// This method taps an element matching “[object Object]” by performing the following steps:
 	//  1. Find an element matching “[object Object]”. If there is none, wait until a matching element is attached to
 	//    the DOM.
@@ -3999,7 +4188,7 @@ type Page interface {
 	//  4. Use [Page.Touchscreen] to tap the center of the element, or the specified “[object Object]”.
 	// When all steps combined have not finished during the specified “[object Object]”, this method throws a
 	// [TimeoutError]. Passing zero timeout disables this.
-	// **NOTE** [Page.Tap] the method will throw if “[object Object]” option of the browser context is false.
+	// **NOTE** [Page.Tap] will throw if the “[object Object]” option of the browser context is false.
 	//
 	// Deprecated: Use locator-based [Locator.Tap] instead. Read more about [locators].
 	//
@@ -4064,13 +4253,14 @@ type Page interface {
 	// Removes a route created with [Page.Route]. When “[object Object]” is not specified, removes all routes for the
 	// “[object Object]”.
 	//
-	// 1. url: A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
+	// 1. url: A glob pattern, regex pattern, or predicate receiving [URL] to match while routing.
 	// 2. handler: Optional handler function to route the request.
 	Unroute(url any, handler ...routeHandler) error
 
 	URL() string
 
-	// Video object associated with this page.
+	// Video object associated with this page. Can be used to access the video file when using the `recordVideo` context
+	// option.
 	Video() Video
 
 	ViewportSize() *Size
@@ -4179,7 +4369,7 @@ type Page interface {
 
 	// Waits for the main frame to navigate to the given URL.
 	//
-	//  url: A glob pattern, regex pattern or predicate receiving [URL] to match while waiting for the navigation. Note that if
+	//  url: A glob pattern, regex pattern, or predicate receiving [URL] to match while waiting for the navigation. Note that if
 	//    the parameter is a string without wildcard characters, the method will wait for navigation to URL that is exactly
 	//    equal to the string.
 	WaitForURL(url any, options ...PageWaitForURLOptions) error
@@ -4213,9 +4403,13 @@ type Page interface {
 // The [PageAssertions] class provides assertion methods that can be used to make assertions about the [Page] state in
 // the tests.
 type PageAssertions interface {
-	// Makes the assertion check for the opposite condition. For example, this code tests that the page URL doesn't
-	// contain `"error"`:
+	// Makes the assertion check for the opposite condition.
 	Not() PageAssertions
+
+	// Asserts that the page body matches the given [accessibility snapshot].
+	//
+	// [accessibility snapshot]: https://playwright.dev/docs/aria-snapshots
+	ToMatchAriaSnapshot(expected string, options ...PageAssertionsToMatchAriaSnapshotOptions) error
 
 	// Ensures the page has the given title.
 	//
@@ -4331,6 +4525,11 @@ type Request interface {
 	// Returns the matching [Response] object, or `null` if the response was not received due to error.
 	Response() (Response, error)
 
+	// Returns the [Response] object if the response has already been received, `null` otherwise.
+	// Unlike [Request.Response], this method does not wait for the response to arrive. It returns immediately with the
+	// response object if the response has been received, or `null` if the response has not been received yet.
+	ExistingResponse() (Response, error)
+
 	// Returns resource size information for given request.
 	Sizes() (*RequestSizesResult, error)
 
@@ -4386,6 +4585,9 @@ type Response interface {
 	//  name: Name of the header.
 	HeaderValues(name string) ([]string, error)
 
+	// Returns the http version used by the response.
+	HttpVersion() (string, error)
+
 	// Returns the JSON representation of response body.
 	// This method will throw if the response body is not parsable via `JSON.parse`.
 	JSON(v any) error
@@ -4433,9 +4635,13 @@ type Route interface {
 	// over to redirected requests.
 	// [Route.Continue] will immediately send the request to the network, other matching handlers won't be invoked. Use
 	// [Route.Fallback] If you want next matching handler in the chain to be invoked.
-	// **NOTE** The `Cookie` header cannot be overridden using this method. If a value is provided, it will be ignored,
-	// and the cookie will be loaded from the browser's cookie store. To set custom cookies, use
-	// [BrowserContext.AddCookies].
+	// **NOTE** Some request headers are **forbidden** and cannot be overridden (for example, `Cookie`, `Host`,
+	// `Content-Length` and others, see
+	// [this MDN page] for full list). If an
+	// override is provided for a forbidden header, it will be ignored and the original request header will be used.
+	// To set custom cookies, use [BrowserContext.AddCookies].
+	//
+	// [this MDN page]: https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header
 	Continue(options ...RouteContinueOptions) error
 
 	// Continues route's request with optional overrides. The method is similar to [Route.Continue] with the difference
@@ -4459,6 +4665,41 @@ type Route interface {
 	Request() Request
 }
 
+// Interface for capturing screencast frames from a page.
+type Screencast interface {
+	// Starts the screencast. When “[object Object]” is provided, it saves video recording to the specified file. When
+	// “[object Object]” is provided, delivers JPEG-encoded frames to the callback. Both can be used together.
+	Start(options ...ScreencastStartOptions) error
+
+	// Stops the screencast and video recording if active. If a video was being recorded, saves it to the path specified
+	// in [Screencast.Start].
+	Stop() error
+
+	// Adds an overlay with the given HTML content. The overlay is displayed on top of the page until removed. Returns a
+	// disposable that removes the overlay when disposed.
+	//
+	//  html: HTML content for the overlay.
+	ShowOverlay(html string, options ...ScreencastShowOverlayOptions) error
+
+	// Shows a chapter overlay with a title and optional description, centered on the page with a blurred backdrop. Useful
+	// for narrating video recordings. The overlay is removed after the specified duration, or 2000ms.
+	//
+	//  title: Title text displayed prominently in the overlay.
+	ShowChapter(title string, options ...ScreencastShowChapterOptions) error
+
+	// Enables visual annotations on interacted elements. Returns a disposable that stops showing actions when disposed.
+	ShowActions(options ...ScreencastShowActionsOptions) error
+
+	// Shows overlays.
+	ShowOverlays() error
+
+	// Removes action decorations.
+	HideActions() error
+
+	// Hides overlays without removing them.
+	HideOverlays() error
+}
+
 // Selectors can be used to install custom selector engines. See [extensibility] for more
 // information.
 //
@@ -4473,7 +4714,8 @@ type Selectors interface {
 
 	// Defines custom attribute name to be used in [Page.GetByTestId]. `data-testid` is used by default.
 	//
-	//  attributeName: Test id attribute name.
+	//  attributeName: Test id attribute name. To match elements with any of several attributes, pass them as a comma-separated list, e.g.
+	//    `"data-pw,data-ti"`.
 	SetTestIdAttribute(attributeName string)
 }
 
@@ -4486,7 +4728,7 @@ type Selectors interface {
 type Touchscreen interface {
 	// Dispatches a `touchstart` and `touchend` event with a single touch at the position
 	// (“[object Object]”,“[object Object]”).
-	// **NOTE** [Page.Tap] the method will throw if “[object Object]” option of the browser context is false.
+	// **NOTE** [Touchscreen.Tap] will throw if the “[object Object]” option of the browser context is false.
 	//
 	// 1. x: X coordinate relative to the main frame's viewport in CSS pixels.
 	// 2. y: Y coordinate relative to the main frame's viewport in CSS pixels.
@@ -4525,6 +4767,14 @@ type Tracing interface {
 	// once, and then create multiple trace chunks with [Tracing.StartChunk] and [Tracing.StopChunk].
 	StartChunk(options ...TracingStartChunkOptions) error
 
+	// Start recording a HAR (HTTP Archive) of network activity in this context. The HAR file is written to disk when
+	// [Tracing.StopHar] is called, or when the returned [Disposable] is disposed.
+	// Only one HAR recording can be active at a time per [BrowserContext].
+	//
+	//  path: Path on the filesystem to write the HAR file to. If the file name ends with `.zip`, the HAR is saved as a zip
+	//    archive with response bodies attached as separate files.
+	StartHar(path string, options ...TracingStartHarOptions) error
+
 	// **NOTE** Use `test.step` instead when available.
 	// Creates a new group within the trace, assigning any subsequent API calls to this group, until [Tracing.GroupEnd] is
 	// called. Groups can be nested and will be visible in the trace viewer.
@@ -4540,6 +4790,9 @@ type Tracing interface {
 
 	// Stop the trace chunk. See [Tracing.StartChunk] for more details about multiple trace chunks.
 	StopChunk(path ...string) error
+
+	// Stop HAR recording and save the HAR file to the path given to [Tracing.StartHar].
+	StopHar() error
 }
 
 // When browser context is created with the `recordVideo` option, each page has a video object associated with it.
@@ -4566,6 +4819,8 @@ type WebError interface {
 
 	// Unhandled error that was thrown.
 	Error() error
+
+	Location() *WebErrorLocation
 }
 
 // The [WebSocket] class represents WebSocket connections within a page. It provides the ability to inspect and
@@ -4677,8 +4932,45 @@ type WebSocketRoute interface {
 	//  message: Message to send.
 	Send(message any)
 
+	// The list of WebSocket subprotocols requested by the page, as passed via the second argument to the
+	// [`WebSocket` constructor]. Corresponds to the
+	// `Sec-WebSocket-Protocol` request header.
+	// Returns an empty array if no protocols were specified.
+	//
+	// [`WebSocket` constructor]: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/WebSocket
+	Protocols() ([]string, error)
+
 	// URL of the WebSocket created in the page.
 	URL() string
+}
+
+// WebStorage exposes the page's `localStorage` or `sessionStorage` for the current origin via an async,
+// [browser-consistent] API.
+// Instances are accessed through [Page.LocalStorage] and [Page.SessionStorage].
+//
+// [browser-consistent]: https://developer.mozilla.org/en-US/docs/Web/API/Storage
+type WebStorage interface {
+	// Returns all items in the storage as name/value pairs.
+	Items() ([]WebStorageItem, error)
+
+	// Returns the value for the given “[object Object]” if present.
+	//
+	//  name: Name of the item to retrieve.
+	GetItem(name string) (string, error)
+
+	// Sets the value for the given “[object Object]”. Overwrites any existing value for that name.
+	//
+	// 1. name: Name of the item to set.
+	// 2. value: New value for the item.
+	SetItem(name string, value string) error
+
+	// Removes the item with the given “[object Object]”. No-op if the item is absent.
+	//
+	//  name: Name of the item to remove.
+	RemoveItem(name string) error
+
+	// Removes all items from the storage.
+	Clear() error
 }
 
 // The Worker class represents a [WebWorker].

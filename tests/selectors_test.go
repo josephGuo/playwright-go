@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +63,10 @@ func TestSelectorsRegisterShouldWork(t *testing.T) {
 	// Selector names are case-sensitive.
 	_, err = page.Locator("tAG=DIV").All()
 	require.ErrorContains(t, err, `Unknown engine "tAG" while parsing selector tAG=DIV`)
+
+	// Registering the same engine name again errors upfront (matches upstream).
+	err = pw.Selectors.Register(selectorName, playwright.Script{Content: &tagSelector})
+	require.ErrorContains(t, err, "has been already registered")
 
 	require.NoError(t, context.Close())
 }

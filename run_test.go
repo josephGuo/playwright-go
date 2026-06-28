@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +36,7 @@ func TestRunOptionsRedirectStderr(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	t.Setenv("PLAYWRIGHT_DOWNLOAD_HOST", ts.URL)
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", ts.URL)
 	driver, err := NewDriver(options)
 	require.NoError(t, err)
 	err = driver.Install()
@@ -76,8 +78,8 @@ func TestRunOptions_OnlyInstallShell(t *testing.T) {
 	require.NoError(t, w.Close())
 	wg.Wait()
 
-	assert.Contains(t, output, "browser: chromium-headless-shell version")
-	assert.NotContains(t, output, "browser: chromium version")
+	assert.Contains(t, output, "chromium-headless-shell")
+	assert.NotContains(t, output, "Chrome for Testing")
 }
 
 func TestDriverInstall(t *testing.T) {
@@ -95,7 +97,7 @@ func TestDriverInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not set PLAYWRIGHT_BROWSERS_PATH: %v", err)
 	}
-	defer os.Unsetenv("PLAYWRIGHT_BROWSERS_PATH")
+	defer os.Unsetenv("PLAYWRIGHT_BROWSERS_PATH") //nolint:errcheck
 	err = driver.Install()
 	if err != nil {
 		t.Fatalf("could not install driver: %v", err)
@@ -106,7 +108,7 @@ func TestDriverInstall(t *testing.T) {
 	}
 }
 
-func TestDriverDownloadHostEnv(t *testing.T) {
+func TestNpmRegistryEnv(t *testing.T) {
 	driverPath := t.TempDir()
 	driver, err := NewDriver(&RunOptions{
 		DriverDirectory:     driverPath,
@@ -122,15 +124,46 @@ func TestDriverDownloadHostEnv(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	err = os.Setenv("PLAYWRIGHT_DOWNLOAD_HOST", ts.URL)
-	if err != nil {
-		t.Fatalf("could not set PLAYWRIGHT_DOWNLOAD_HOST: %v", err)
-	}
-	defer os.Unsetenv("PLAYWRIGHT_DOWNLOAD_HOST")
+	t.Setenv("PLAYWRIGHT_GO_NPM_REGISTRY", ts.URL)
 	err = driver.Install()
-	if err == nil || !strings.Contains(err.Error(), "404 Not Found") || !strings.Contains(uri, "/builds/driver") {
-		t.Fatalf("PLAYWRIGHT_DOWNLOAD_HOST do not work: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "404 Not Found") || !strings.Contains(uri, "playwright-core") {
+		t.Fatalf("PLAYWRIGHT_GO_NPM_REGISTRY does not work: %v", err)
 	}
+}
+
+func TestNodePlatformSuffix(t *testing.T) {
+	suffix, err := nodePlatformSuffix()
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		require.NoError(t, err)
+		assert.NotEmpty(t, suffix)
+	default:
+		// e.g. linux/arm has no prebuilt Node.js binary on nodejs.org.
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "PLAYWRIGHT_NODEJS_PATH")
+	}
+}
+
+func TestPatchDriverBundleAllowsMissingPageErrorLocation(t *testing.T) {
+	driverPath := t.TempDir()
+	bundlePath := filepath.Join(driverPath, "package", "lib", "coreBundle.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(bundlePath), 0o755))
+	require.NoError(t, os.WriteFile(bundlePath, []byte(`location:{
+url:pageError.location.url,
+line: pageError.location.lineNumber,
+column:    pageError.location.columnNumber
+}`), 0o644))
+
+	driver, err := NewDriver(&RunOptions{DriverDirectory: driverPath})
+	require.NoError(t, err)
+	require.NoError(t, driver.patchDriverBundle())
+	require.NoError(t, driver.patchDriverBundle())
+
+	data, err := os.ReadFile(bundlePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `pageError.location?.url || ""`)
+	require.Contains(t, string(data), `pageError.location?.lineNumber || 0`)
+	require.Contains(t, string(data), `pageError.location?.columnNumber || 0`)
 }
 
 func TestShouldNotHangWhenPlaywrightUnexpectedExit(t *testing.T) {
@@ -174,6 +207,18 @@ func TestGetNodeExecutable(t *testing.T) {
 
 	executable = getNodeExecutable("testDirectory")
 	assert.Contains(t, executable, "testDirectory")
+}
+
+func TestGetDriverCliJs(t *testing.T) {
+	// When PLAYWRIGHT_CLI_PATH is set, use that path directly.
+	t.Setenv("PLAYWRIGHT_CLI_PATH", "/custom/cli.js")
+	assert.Equal(t, "/custom/cli.js", getDriverCliJs("testDirectory"))
+
+	// Otherwise fall back to the assumed <DriverDirectory>/package/cli.js layout.
+	require.NoError(t, os.Unsetenv("PLAYWRIGHT_CLI_PATH"))
+	cliJs := getDriverCliJs("testDirectory")
+	assert.Contains(t, cliJs, "testDirectory")
+	assert.Contains(t, cliJs, "cli.js")
 }
 
 func killProcessByPid(pid int) error {
